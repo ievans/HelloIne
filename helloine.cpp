@@ -78,7 +78,9 @@ static bool AddressIsTaken(const GlobalValue *GV) {
         const User *UR = U.getUser();
         //errs() << "    |- instruction " << dyn_cast<Instruction>(UR)->getOpcodeName() << "[" << dyn_cast<Instruction>(UR)->getName() << "]\n";
         // print out the insruction
+        errs() << "insn: ";
         dyn_cast<Instruction>(UR)->print(errs());
+        errs() << "\n";
 
         if (const StoreInst *SI = dyn_cast<StoreInst>(UR)) {
             if (SI->getOperand(0) == GV || SI->isVolatile()) {

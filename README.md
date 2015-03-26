@@ -2,6 +2,7 @@ Checkout LLVM head, this goes in lib/Transforms/
 Build LLVM with cmake.
 
 Usage:
+
     opt -load build/lib/HelloIne.so -debug -HelloIne < demo.bc > /dev/null
 
 Other useful:

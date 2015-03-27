@@ -68,44 +68,66 @@ namespace {
   };
 }
 
-static bool AddressIsTaken(const GlobalValue *GV) {
+static bool AddressIsTaken(const Value *GV) {
     // Delete any dead constantexpr klingons.
-    GV->removeDeadConstantUsers();
+    //GV->removeDeadConstantUsers();
 
     errs() << "question: is address taken for GV: " << GV << "\n";
 
     for (const Use &U : GV->uses()) {
         const User *UR = U.getUser();
+
         //errs() << "    |- instruction " << dyn_cast<Instruction>(UR)->getOpcodeName() << "[" << dyn_cast<Instruction>(UR)->getName() << "]\n";
         // print out the insruction
-        errs() << "insn: ";
-        dyn_cast<Instruction>(UR)->print(errs());
-        errs() << "\n";
+
+
+        if (isa<GlobalObject>(UR)) {
+            errs() << "global object identified to: " << dyn_cast<GlobalObject>(UR) << "\n";
+        }
+
+        if (isa<Function>(UR)) {
+            errs() << "FUNCTION POINTER identified to: " << dyn_cast<Function>(UR)->getName() << "\n";
+        }
+
+        if (isa<Instruction>(UR)) {
+            errs() << "instruction: ";
+            dyn_cast<Instruction>(UR)->print(errs());
+            errs() << "\n\t[from " << dyn_cast<Instruction>(UR)->getParent()->getParent() << "]";
+            errs() << "\n";
+        }
 
         if (const StoreInst *SI = dyn_cast<StoreInst>(UR)) {
+            errs() << "--> possible store at " << SI;
             if (SI->getOperand(0) == GV || SI->isVolatile()) {
-                errs() << "--> store at " << SI;
-                return true;  // Storing addr of GV.
+                //return true;  // Storing addr of GV.
             }
         } else if (isa<InvokeInst>(UR) || isa<CallInst>(UR)) {
+            errs() << "--> indirect? invokation at " << UR << "\n";
             // Make sure we are calling the function, not passing the address.
             ImmutableCallSite CS(cast<Instruction>(UR));
             if (!CS.isCallee(&U)) {
-                errs() << "--> indirect? invokation at " << UR << "\n";
-                return true;
+                //return true;
             }
         } else if (const LoadInst *LI = dyn_cast<LoadInst>(UR)) {
+            errs() << "--> possible load at " << LI << "\n";
             if (LI->isVolatile()) {
-                errs() << "--> load at " << LI;
-                return true;
+                //return true;
             }
         } else if (isa<BlockAddress>(UR)) {
             // blockaddress doesn't take the address of the function, it takes addr
             // of label.
+            errs() << "--> block address\n";
         } else {
-            errs() << "--> UNKNOWN invokation " << U;
-            return true;
+            errs() << "--> UNKNOWN invokation " << U << "\n";
+//            for (const Use &U2 : UR->uses()) {
+//                const User *UR2 = U2.getUser();
+//                if (isa<GlobalValue>(UR2)) {
+//                AddressIsTaken(UR2);
+//                }
+//            }
+            //return true;
         }
+        AddressIsTaken(UR);
     }
     return false;
 }
@@ -119,8 +141,18 @@ bool HelloIne::runOnModule(Module &M) {
         if (AddressIsTaken(F)) {
             // hi
         }
-
     }
+
+
+  // Loop over global variables.  We inform the solver about any internal global
+  // variables that do not have their 'addresses taken'.  If they don't have
+  // their addresses taken, we can propagate constants through them.
+  for (Module::global_iterator G = M.global_begin(), E = M.global_end();
+       G != E; ++G)
+      AddressIsTaken(G);
+//    if (!G->isConstant() && G->hasLocalLinkage() && !AddressIsTaken(G))
+//      Solver.TrackValueOfGlobalVariable(G);
+
 }
 
 /*virtual bool runOnFunction(Function &F) {

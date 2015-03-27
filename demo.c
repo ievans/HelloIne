@@ -16,6 +16,13 @@ extern void printColor(Color * c);
 
 Color Colors[MAX_COLORS];
 
+void test_lambda(int a, int b, int c);
+{
+    auto function = [a, b, c](int x) { return (a + b - c) * x; }
+    return function(10);
+}
+
+
 void eachColor (void (*fp)(Color *c)) {
     int i;
     for (i=0; i<MAX_COLORS; i++)
@@ -57,7 +64,13 @@ int main() {
 
 
     // we want to declare a pointer to the function but not actually assign it
+    // this shouldn't actually be dangerous because it has a bad type but no
+    // actual value that is dangerous. so it shouldn't show up in the anlaysis
     int (*myfunction)(char * buff);
+
+
+    // todo, see http://stackoverflow.com/questions/13788590/c-address-of-lambda-objects-as-parameters-to-functions
+    test_lambda();
 
     return 0;
 }

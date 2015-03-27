@@ -80,6 +80,11 @@ static bool AddressIsTaken(const Value *GV, int level) {
     // Delete any dead constantexpr klingons.
     //GV->removeDeadConstantUsers();
 
+    // todo: support lambda functions (they are valid in the LLVM IR). We should
+    // make sure that they are considered globals and thus are being passed in to this analysis :)
+    // search for lambdas in http://llvm.lyngvig.org/Articles/Mapping-High-Level-Constructs-to-LLVM-IR#16
+
+
     errs() << LevelTab(level) << "Value: " << GV << "\n";
 
     for (const Use &U : GV->uses()) {
@@ -97,6 +102,10 @@ static bool AddressIsTaken(const Value *GV, int level) {
         }
 
         if (isa<Instruction>(UR)) {
+            // we will insert an instruction blessing immediate of this
+            // instruction with a code pointer tag. this will probably require
+            // refractoring this constant into a new constant. we can use that replaceusesof thing...
+
             errs() << LevelTab(level) << "\tinstruction: ";
             dyn_cast<Instruction>(UR)->print(errs());
             errs() << LevelTab(level) << "\n" << LevelTab(level) << "\t[from " << dyn_cast<Instruction>(UR)->getParent()->getParent() << "]";

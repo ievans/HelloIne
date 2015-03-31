@@ -85,7 +85,7 @@ static bool AddressIsTaken(const Value *GV, int level) {
     // search for lambdas in http://llvm.lyngvig.org/Articles/Mapping-High-Level-Constructs-to-LLVM-IR#16
 
 
-    errs() << LevelTab(level) << "Value: " << GV << "\n";
+    errs() << LevelTab(level) << "Value: " << GV << "(name: " << GV->getName() << "\n";
 
     for (const Use &U : GV->uses()) {
         const User *UR = U.getUser();
@@ -106,8 +106,18 @@ static bool AddressIsTaken(const Value *GV, int level) {
             // instruction with a code pointer tag. this will probably require
             // refractoring this constant into a new constant. we can use that replaceusesof thing...
 
+            // insert new instruction
+            //Instruction* existingInst = dyn_cast<Instruction>(UR);
+            //Instruction* newInst = new Instruction( );
+            //IRB.CreateAdd(Base, IRB.CreateIntCast(Size, IntPtrTy, false))
+            //existingInst->getParent()->getInstList().insert(existingInst, newInst);
+
+            
+
             errs() << LevelTab(level) << "\tinstruction: ";
             dyn_cast<Instruction>(UR)->print(errs());
+            errs() << LevelTab(level) << "\tdebug location: ";
+            dyn_cast<Instruction>(UR)->getDebugLoc().print(errs());
             errs() << LevelTab(level) << "\n" << LevelTab(level) << "\t[from " << dyn_cast<Instruction>(UR)->getParent()->getParent() << "]";
             errs() << LevelTab(level) << "\n";
         }

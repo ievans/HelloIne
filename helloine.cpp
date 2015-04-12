@@ -47,7 +47,8 @@ static RegisterPass<HelloIne> X("HelloIne", "HelloIne World Pass", false, false)
 #include "llvm/Transforms/IPO.h"
 #include "llvm/Transforms/Utils/Local.h"
 
-
+#include <llvm/IR/InlineAsm.h>
+#include "llvm/IR/ValueSymbolTable.h"
 
 //#include "llvm/Pass.h"
 //#include "llvm/IR/Function.h"
@@ -65,6 +66,9 @@ namespace {
           //        initializeHelloInePass(*PassRegistry::getPassRegistry());
       }
     bool runOnModule(Module &M) override;
+    bool shouldProtectType(Type *Ty, bool IsStore, MDNode *TBAATag);
+    DenseMap<StructType*, MDNode*> StructsTBAA;
+    DenseMap<StructType*, MDNode*> UnionsTBAA;
   };
 }
 
@@ -76,7 +80,183 @@ static std::string LevelTab(int level) {
     return s;
 }
 
-static bool AddressIsTaken(const Value *GV, int level) {
+/*
+static MDNode *getNextElTBAATag(size_t &STBAAIndex, Type *ElTy,
+                                const StructLayout *SL, unsigned idx,
+                                MDNode *STBAATag) {
+    if (ElTy->isSingleValueType() && STBAATag) {
+        size_t Off = SL->getElementOffset(idx);
+        size_t STBAASize = STBAATag->getNumOperands();
+
+        // skip over embedded structs (if any)
+        while (STBAAIndex+2 < STBAASize &&
+               cast<ConstantInt>(STBAATag->getOperand(STBAAIndex))
+               ->getValue().ult(Off)) STBAAIndex += 3;
+
+        if (STBAAIndex+2 < STBAASize &&
+            cast<ConstantInt>(STBAATag->getOperand(STBAAIndex))
+            ->equalsInt(Off)) {
+            // The struct type might be union, in which case we'll have >1 tags
+            // for the same offset.
+            if (STBAAIndex+3+2 < STBAASize &&
+                cast<ConstantInt>(STBAATag->getOperand(STBAAIndex+3))
+                ->equalsInt(Off)) {
+                // FIXME: support unions
+            } else {
+                //FIXME: the following assertion seems to not hold for bitfields
+                //assert(cast<ConstantInt>(STBAATag->getOperand(STBAAIndex+1))
+                //       ->equalsInt(DL->getTypeAllocSize(ElTy)));
+                return cast<MDNode>(STBAATag->getOperand(STBAAIndex+2));
+            }
+        }
+    }
+
+    return NULL;
+}
+
+*/
+
+bool HelloIne::shouldProtectType(Type *Ty, bool IsStore, MDNode *TBAATag) {
+    if (Ty->isFunctionTy() ||
+        (Ty->isPointerTy() &&
+         cast<PointerType>(Ty)->getElementType()->isFunctionTy())) {
+        return true;
+
+    } else if (/*Ty->isPrimitiveType() || */ Ty->isIntegerTy()) {
+        return false;
+
+    } else if (PointerType *PTy = dyn_cast<PointerType>(Ty)) {
+        // FIXME: for unknown reason, clang sometimes generates function pointer
+        // items in structs as {}* (e.g., in struct _citrus_iconv_ops). However,
+        // clang keeps correct TBAA tags even in such cases, so we look at it first.
+        if (IsStore && PTy->getElementType()->isStructTy() &&
+            cast<StructType>(PTy->getElementType())->getNumElements() == 0 &&
+            TBAATag && TBAATag->getNumOperands() > 1 &&
+            cast<MDString>(TBAATag->getOperand(0))->getString() ==
+            "function pointer") {
+            return true;
+        }
+
+        if (true) { //CPSOnly) {
+            Type *ElTy = PTy->getElementType();
+            if (ElTy->isPointerTy()) {
+                //     cast<PointerType>(ElTy)->getElementType()->isFunctionTy()) {
+                // It could be a vtable pointer
+                if (TBAATag) {
+                    assert(TBAATag->getNumOperands() > 1);
+                    MDString *TagName = cast<MDString>(TBAATag->getOperand(0));
+                    return TagName->getString() == "vtable pointer";
+                }
+            }
+
+            if (IsStore && ElTy->isIntegerTy(8)) {
+                // We want to instrument all stores of void* pointers, as those
+                // might later be casted to protected pointers. Unfortunately,
+                // LLVM represents all void* pointers as i8*, so we do something
+                // very over-approximate here.
+
+                if (TBAATag) {
+                    assert(TBAATag->getNumOperands() > 1);
+                    MDString *TagName = cast<MDString>(TBAATag->getOperand(0));
+                    return TagName->getString() == "void pointer" ||
+                        TagName->getString() == "function pointer";
+                }
+            }
+
+            return false;
+        }
+
+        if (IsStore && PTy->getElementType()->isIntegerTy(8)) {
+            // We want to instrument all stores of void* pointers, as those
+            // might later be casted to protected pointers. Unfortunately,
+            // LLVM represents all void* pointers as i8*, so we do something
+            // very over-approximate here.
+
+            if (TBAATag) {
+                assert(TBAATag->getNumOperands() > 1);
+                MDString *TagName = cast<MDString>(TBAATag->getOperand(0));
+                return TagName->getString() == "void pointer" ||
+                    TagName->getString() == "function pointer";
+            }
+
+            return true;
+        }
+
+        return shouldProtectType(PTy->getElementType(), IsStore, NULL);
+
+    } else if (SequentialType *PTy = dyn_cast<SequentialType>(Ty)) {
+        return shouldProtectType(PTy->getElementType(), IsStore, NULL);
+
+    } else if (StructType *STy = dyn_cast<StructType>(Ty)) {
+        if (STy->isOpaque())
+            return IsStore;
+
+        //TypesProtectInfoTy::key_type Key(Ty, IsStore);
+        //TypesProtectInfoTy::iterator TIt = StructTypesProtectInfo.find(Key);
+        //if (TIt != StructTypesProtectInfo.end())
+        //return TIt->second;
+
+        // Avoid potential infinite recursion due to recursive types
+        // FIXME: support recursive types with sensitive members
+        //StructTypesProtectInfo[Key] = false;
+
+        if (MDNode *UTBAATag = UnionsTBAA.lookup(STy)) {
+            // This is a union, try casting it to all components
+            for (unsigned i = 0, e = UTBAATag->getNumOperands(); i+1 < e; i += 2) {
+                //assert(isa<UndefValue>(UTBAATag->getOperand(i)));
+                //assert(isa<MDNode>(UTBAATag->getOperand(i+1)));
+
+                /*
+TOOD
+                Type *ElTy = UTBAATag->getOperand(i)->getType();
+                MDNode *ElTBAATag = cast<MDNode>(UTBAATag->getOperand(i+1));
+                if (shouldProtectType(ElTy, IsStore, ElTBAATag)) {
+                    //StructTypesProtectInfo[Key] = true;
+                    return true;
+                }
+                */
+            }
+
+
+            return false;
+        } else {
+            // Tnis is not a union, go through all fields
+            MDNode *STBAATag = StructsTBAA.lookup(STy);
+            if (!STBAATag) {
+                    dbgs() << "CPI: missing struct TBAA for ";
+                    if (STy->hasName()) dbgs() << STy->getName();
+                    dbgs() << "\n    "; STy->dump();
+                    dbgs() << "\n";
+            }
+
+/*
+            const StructLayout *SL = STBAATag ? DL->getStructLayout(STy) : NULL;
+            size_t STBAAIndex = 0;
+
+            for (unsigned i = 0, e = STy->getNumElements(); i != e; ++i) {
+                Type *ElTy = STy->getElementType(i);
+                MDNode *ElTBAATag =
+                    getNextElTBAATag(STBAAIndex, ElTy, SL, i, STBAATag);
+
+                if (shouldProtectType(ElTy, IsStore, ElTBAATag)) {
+                    // Cache the results to speedup future queries
+                    //StructTypesProtectInfo[Key] = true;
+                    return true;
+                }
+            }
+*/
+            return false;
+        }
+
+    } else {
+        Ty->dump();
+        llvm_unreachable("Unhandled type");
+    }
+}
+
+
+
+static bool IsCodePointer(Value *GV, llvm::LLVMContext& context, int level) {
     // Delete any dead constantexpr klingons.
     //GV->removeDeadConstantUsers();
 
@@ -84,11 +264,15 @@ static bool AddressIsTaken(const Value *GV, int level) {
     // make sure that they are considered globals and thus are being passed in to this analysis :)
     // search for lambdas in http://llvm.lyngvig.org/Articles/Mapping-High-Level-Constructs-to-LLVM-IR#16
 
-
+    bool isCodePointer = false;
     errs() << LevelTab(level) << "Value: " << GV << "(name: " << GV->getName() << "\n";
+    GV->getType()->print(errs());
+    errs() << "llvm is fuction type" << GV->getType()->isFunctionTy() << "\n";
+    //errs() << "linkage: " << isa<BasicBlock>(GV); // should be true if it is a jump target address
+    //errs() << "linkage: " << isa<MetadataAsValue>(GV); // dunno what this is
 
-    for (const Use &U : GV->uses()) {
-        const User *UR = U.getUser();
+    for (Use &U : GV->uses()) {
+        User *UR = U.getUser();
         
         // User -> {Constant, Operator}
         // we pretty much only care about constants
@@ -97,81 +281,239 @@ static bool AddressIsTaken(const Value *GV, int level) {
             errs() << LevelTab(level) << "global object identified to: " << dyn_cast<GlobalObject>(UR) << "\n";
         }
 
-        if (isa<Function>(UR)) {
-            errs() << LevelTab(level) << "FUNCTION POINTER identified to: " << dyn_cast<Function>(UR)->getName() << "\n";
-        }
-
         if (isa<Instruction>(UR)) {
             // we will insert an instruction blessing immediate of this
             // instruction with a code pointer tag. this will probably require
             // refractoring this constant into a new constant. we can use that replaceusesof thing...
 
             // insert new instruction
-            //Instruction* existingInst = dyn_cast<Instruction>(UR);
             //Instruction* newInst = new Instruction( );
             //IRB.CreateAdd(Base, IRB.CreateIntCast(Size, IntPtrTy, false))
             //existingInst->getParent()->getInstList().insert(existingInst, newInst);
-
-            
-
             errs() << LevelTab(level) << "\tinstruction: ";
             dyn_cast<Instruction>(UR)->print(errs());
             errs() << LevelTab(level) << "\tdebug location: ";
             dyn_cast<Instruction>(UR)->getDebugLoc().print(errs());
             errs() << LevelTab(level) << "\n" << LevelTab(level) << "\t[from " << dyn_cast<Instruction>(UR)->getParent()->getParent() << "]";
             errs() << LevelTab(level) << "\n";
+
+            if (isa<CallInst>(UR)) {
+                if (cast<CallInst>(UR)->getCalledFunction()) {
+                    // the called function exists--it is a direct call; no need
+                    // to instrument it IFF the callee is this USE (b/c the
+                    // arguments might be function pointers)
+                    ImmutableCallSite CS(cast<Instruction>(UR));
+                    if (CS.isCallee(&U)) {
+                        errs() << "skipped a call instruction because call address immediate\n";
+                        continue;
+                    }
+                }
+            }
+            if (const StoreInst *SI = dyn_cast<StoreInst>(UR)) {
+                if (SI->isVolatile()) { 
+                    errs() << "skipped a store instruction because volatile and therefor inserted by us\n";
+                    continue; 
+                }
+            }
+        
+            Instruction* existingInst = dyn_cast<Instruction>(UR);
+            errs() << " creating blessed storage\n";
+            AllocaInst* blessed_storage = new AllocaInst(GV->getType(), "blessed_use", existingInst);
+
+            /********************************************************************************/
+            /* inline asm */
+            std::vector<Type*>AsmFuncTy_args;
+            // TODO hardcoded 32
+            AsmFuncTy_args.push_back(IntegerType::get(context, 32));
+            FunctionType* AsmFuncTy = FunctionType::get(
+                /*Result=*/Type::getVoidTy(context),
+                /*Params=*/AsmFuncTy_args,
+                /*isVarArg=*/false);
+            errs() << " creating bless-ing call\n";
+            InlineAsm* myinlineasm = InlineAsm::get(AsmFuncTy, "int $$0x80", "{ax},~{dirflag},~{fpsr},~{flags}",true);
+            std::vector<Value*> asm_params;
+            asm_params.push_back(blessed_storage);
+            CallInst* asm_call = CallInst::Create(myinlineasm, asm_params, "", existingInst);
+            asm_call->setCallingConv(CallingConv::C);
+            asm_call->setTailCall(false);
+            AttributeSet asm_call_PAL;
+            {
+                SmallVector<AttributeSet, 4> Attrs;
+                AttributeSet PAS;
+                {
+                    AttrBuilder B;
+                    B.addAttribute(Attribute::NoUnwind);
+                    PAS = AttributeSet::get(context, ~0U, B);
+                }
+   
+                Attrs.push_back(PAS);
+                asm_call_PAL = AttributeSet::get(context, Attrs);
+   
+            }
+            asm_call->setAttributes(asm_call_PAL);
+            /********************************************************************************/
+
+            errs() << " creating blessed STORE\n";
+            StoreInst* blessed_store = new StoreInst(GV, blessed_storage, /* volatile = */ true, existingInst);
+            //blessed_store->setAlignment(8);
+            BitCastInst *TheBC = new BitCastInst(blessed_storage, GV->getType(), "newgv", existingInst);
+            errs() << " REPLACING\n";
+            UR->replaceUsesOfWith(GV, TheBC);
+            errs() << "replace worked!!\n";
+        } else {
+            errs() << "non instruction use!!\n";
+            if (isa<ConstantExpr>(UR)) { errs() << "constant expr\n"; } 
+            if (isa<Constant>(UR)) { errs() << "constant nonexpr\n"; } 
         }
 
         if (const StoreInst *SI = dyn_cast<StoreInst>(UR)) {
-            errs() << LevelTab(level) << "--> possible store at " << SI << "\n";
+//            errs() << LevelTab(level) << "--> possible store at " << SI << "\n";
             if (SI->getOperand(0) == GV || SI->isVolatile()) {
                 //return true;  // Storing addr of GV.
             }
         } else if (isa<InvokeInst>(UR) || isa<CallInst>(UR)) {
             errs() << LevelTab(level) << "--> indirect? invokation at " << UR << "\n";
+            isCodePointer = true;
+
+            //Function* llvm::CallInst::getCalledFunction
+            //getCalledFunction - Return the function called, or null if this is an indirect function invocation.
+
+
             // Make sure we are calling the function, not passing the address.
             ImmutableCallSite CS(cast<Instruction>(UR));
             if (!CS.isCallee(&U)) {
                 //return true;
             }
         } else if (const LoadInst *LI = dyn_cast<LoadInst>(UR)) {
-            errs() << LevelTab(level) << "--> possible load at " << LI << "\n";
+//            errs() << LevelTab(level) << "--> possible load at " << LI << "\n";
+            // examine operands--any of them functions?
             if (LI->isVolatile()) {
                 //return true;
             }
         } else if (isa<BlockAddress>(UR)) {
             // blockaddress doesn't take the address of the function, it takes addr
             // of label.
-            errs() << LevelTab(level) << "--> block address\n";
+//            errs() << LevelTab(level) << "--> block address\n";
         } else {
-            errs() << LevelTab(level) << "--> UNKNOWN invokation " << U << "\n";
+//            errs() << LevelTab(level) << "--> UNKNOWN invokation " << U << "\n";
         }
-        AddressIsTaken(UR, level + 1);
+        isCodePointer =  isCodePointer || IsCodePointer(UR, context, level + 1);
     }
-    return false;
+    return isCodePointer;
 }
 
+
+void EnumerateValue(Value* v) {
+    errs() << "this value found in the symboltable: ";
+    v->print(errs());
+    errs() << " (type ";
+    v->getType()->print(errs());
+    errs() << "\n is a constant expr? " << isa<llvm::Constant>(v) << "\n";
+    errs() << "\n is a GV? " << isa<llvm::GlobalValue>(v) << "\n";
+    errs() << "\n is a blockaddr? " << isa<llvm::BlockAddress>(v) << "\n";
+    errs() << "\n is a int? " << isa<llvm::ConstantInt>(v) << "\n";
+}
+
+/// EnumerateValueSymbolTable - Insert all of the values in the specified symbol
+/// table into the values table.
+void EnumerateValueSymbolTable(const ValueSymbolTable &VST) {
+  for (ValueSymbolTable::const_iterator VI = VST.begin(), VE = VST.end();
+       VI != VE; ++VI)
+    EnumerateValue(VI->getValue());
+}
+
+
 bool HelloIne::runOnModule(Module &M) { 
+
+
+   llvm::Module::FunctionListType& flist = M.getFunctionList();
+   // this gives us the LLVM::Value for each function; iterate through uses of
+   // these values and replace them with "blessed" uses
+   for (llvm::Module::FunctionListType::iterator it=flist.begin(); it!=flist.end(); ++it) {
+       errs() << "function: " << it->getName() << "\n";
+       IsCodePointer(it, M.getContext(), 0);
+   }
+
+   //EnumerateValueSymbolTable(M.getValueSymbolTable());
+    //SmallVector<GlobalVariable *, 16> GlobalsToChange;
     //
-    errs() << "********************************************************************************\n";
-    for (Module::iterator F = M.begin(), E = M.end(); F != E; ++F) {
+    //errs() << "********************************************************************************\n";
+    /*
+for (Module::iterator F = M.begin(), E = M.end(); F != E; ++F) {
         if (F->isDeclaration())
             continue;
 
-        if (AddressIsTaken(F, 0)) {
+        if (IsCodePointer(F, 0)) {
             // hi
         }
     }
+    */
+
+// from lib/transforms/instrumentation/AddressSanitizer.cpp
+// AddressSanitizerModule::InstrumentGlobals
+
+/*
+  for (auto &G : M.globals()) {
+      //if (IsCodePointer(&G, 0)) GlobalsToChange.push_back(&G);
+      GlobalsToChange.push_back(&G);
+      //if (ShouldProtectType(&G, 0)) GlobalsToChange.push_back(&G);
+  }
+*/
+
+//  GlobalVariable *ModuleName = createPrivateGlobalForString(
+//      M, M.getModuleIdentifier(), /*AllowMerging*/ false);  
+
+/*
+  size_t n = GlobalsToChange.size();
+  for (size_t i = 0; i < n; i++) {
+    GlobalVariable *G = GlobalsToChange[i];
+*/
+    
+    // Create string holding the global name (use global name from metadata
+    // if it's available, otherwise just write the name of global variable).
+//    GlobalVariable *Name = createPrivateGlobalForString(
+//        M, "__fp" + G->getName(), /*AllowMerging*/ true);
+
+// 
+/*
+    GlobalVariable::GlobalVariable(Module & M,
+                                   Type * Ty,
+                                   bool isConstant,
+                                   LinkageTypes Linkage,
+                                   Constant * Initializer,
+                                   const Twine & Name = "",
+                                   GlobalVariable * InsertBefore = nullptr,
+                                   ThreadLocalMode TLMode = NotThreadLocal,
+                                   unsigned AddressSpace = 0,
+                                   bool isExternallyInitialized = false 
+        )
+*/
+/*
+    PointerType *PtrTy = cast<PointerType>(G->getType());
+    Type *Ty = PtrTy->getElementType();
+
+    GlobalVariable *NewGlobal = //new GlobalVariable(G);
+        new GlobalVariable(M, Ty, G->isConstant(), G->getLinkage(), G->getInitializer(),
+                           "__fp_" + G->getName(), G, G->getThreadLocalMode());
+    errs() << "new global created " << NewGlobal << "\n";
+    NewGlobal->copyAttributesFrom(G);
+    G->replaceAllUsesWith(NewGlobal);
+    errs() << "replaced " << G->getName() << "\n";
+  }
+
+
 
     errs() << "********************************************************************************\n";
   // Loop over global variables.  We inform the solver about any internal global
   // variables that do not have their 'addresses taken'.  If they don't have
   // their addresses taken, we can propagate constants through them.
   for (Module::global_iterator G = M.global_begin(), E = M.global_end();
-       G != E; ++G)
-      AddressIsTaken(G, 0);
-//    if (!G->isConstant() && G->hasLocalLinkage() && !AddressIsTaken(G))
+       G != E; ++G) {
+      IsCodePointer(G, 0);
+//    if (!G->isConstant() && G->hasLocalLinkage() && !IsCodePointer(G))
 //      Solver.TrackValueOfGlobalVariable(G);
+  }
+*/
 
   return false;
 }

@@ -298,6 +298,10 @@ static bool IsCodePointer(Value *GV, llvm::LLVMContext& context, int level) {
             errs() << LevelTab(level) << "\n";
 
             if (isa<CallInst>(UR)) {
+                if (cast<CallInst>(UR)->isInlineAsm()) {
+                    errs() << "skipped a call instruction because INLINE ASM\n";
+                    continue;
+                }
                 if (cast<CallInst>(UR)->getCalledFunction()) {
                     // the called function exists--it is a direct call; no need
                     // to instrument it IFF the callee is this USE (b/c the
@@ -319,21 +323,30 @@ static bool IsCodePointer(Value *GV, llvm::LLVMContext& context, int level) {
             Instruction* existingInst = dyn_cast<Instruction>(UR);
             errs() << " creating blessed storage\n";
             AllocaInst* blessed_storage = new AllocaInst(GV->getType(), "blessed_use", existingInst);
+            errs() << " creating blessed STORE\n";
+            StoreInst* blessed_store = new StoreInst(GV, blessed_storage, /* volatile = */ true, existingInst);
+            errs() << " creating blessed LOAD\n";
+            LoadInst* blessed_load = new LoadInst(blessed_storage, "blessed load", /* volatile = */ false, existingInst);
+            blessed_load->setAlignment(4);
 
             /********************************************************************************/
             /* inline asm */
+
             std::vector<Type*>AsmFuncTy_args;
-            // TODO hardcoded 32
-            AsmFuncTy_args.push_back(IntegerType::get(context, 32));
+            AsmFuncTy_args.push_back(GV->getType());
             FunctionType* AsmFuncTy = FunctionType::get(
                 /*Result=*/Type::getVoidTy(context),
                 /*Params=*/AsmFuncTy_args,
                 /*isVarArg=*/false);
+
+            // n.b.; gcc uses %0 but clang uses $0 to refer to the operand
+            auto riscv_set = "settag $0, 2";
+            auto x86_set = "int $$0x80";
+            InlineAsm* myinlineasm = InlineAsm::get(AsmFuncTy, riscv_set, "{dx},~{dirflag},~{fpsr},~{flags}",true);
+            //std::vector<Value*> asm_params;
+            //asm_params.push_back(blessed_load);
             errs() << " creating bless-ing call\n";
-            InlineAsm* myinlineasm = InlineAsm::get(AsmFuncTy, "int $$0x80", "{ax},~{dirflag},~{fpsr},~{flags}",true);
-            std::vector<Value*> asm_params;
-            asm_params.push_back(blessed_storage);
-            CallInst* asm_call = CallInst::Create(myinlineasm, asm_params, "", existingInst);
+            CallInst* asm_call = CallInst::Create(myinlineasm, blessed_load, "", existingInst);
             asm_call->setCallingConv(CallingConv::C);
             asm_call->setTailCall(false);
             AttributeSet asm_call_PAL;
@@ -345,20 +358,17 @@ static bool IsCodePointer(Value *GV, llvm::LLVMContext& context, int level) {
                     B.addAttribute(Attribute::NoUnwind);
                     PAS = AttributeSet::get(context, ~0U, B);
                 }
-   
                 Attrs.push_back(PAS);
                 asm_call_PAL = AttributeSet::get(context, Attrs);
-   
             }
             asm_call->setAttributes(asm_call_PAL);
+
             /********************************************************************************/
 
-            errs() << " creating blessed STORE\n";
-            StoreInst* blessed_store = new StoreInst(GV, blessed_storage, /* volatile = */ true, existingInst);
             //blessed_store->setAlignment(8);
-            BitCastInst *TheBC = new BitCastInst(blessed_storage, GV->getType(), "newgv", existingInst);
+            //BitCastInst *TheBC = new BitCastInst(blessed_storage, GV->getType(), "newgv", existingInst);
             errs() << " REPLACING\n";
-            UR->replaceUsesOfWith(GV, TheBC);
+            UR->replaceUsesOfWith(GV, blessed_load);
             errs() << "replace worked!!\n";
         } else {
             errs() << "non instruction use!!\n";

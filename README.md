@@ -5,6 +5,9 @@ Edit lib/CMakeLists.txt and add a line:
 
 Build LLVM with cmake.
 
+    mkdir build
+    cmake ../ -DCMAKE_INSTALL_PREFIX:PATH=$RISCV
+
 Usage:
 
     opt -load build/lib/HelloIne.so -debug -HelloIne < demo.bc > /dev/null

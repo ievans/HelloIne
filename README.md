@@ -1,4 +1,8 @@
-Checkout LLVM head, this goes in lib/Transforms/
+Checkout LLVM head, this goes in `lib/Transforms/`
+Edit lib/CMakeLists.txt and add a line:
+
+    add_subdirectory(HelloIne)
+
 Build LLVM with cmake.
 
 Usage:

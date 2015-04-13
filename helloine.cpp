@@ -340,6 +340,7 @@ static bool IsCodePointer(Value *GV, llvm::LLVMContext& context, int level) {
                 /*isVarArg=*/false);
 
             // n.b.; gcc uses %0 but clang uses $0 to refer to the operand
+            // "2" is the tag we are setting on the thing
             auto riscv_set = "settag $0, 2";
             auto x86_set = "int $$0x80";
             InlineAsm* myinlineasm = InlineAsm::get(AsmFuncTy, riscv_set, "{dx},~{dirflag},~{fpsr},~{flags}",true);

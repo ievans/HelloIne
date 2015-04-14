@@ -10,7 +10,10 @@ Build LLVM with cmake.
 
 Usage:
 
-    opt -load build/lib/HelloIne.so -debug -HelloIne < demo.bc > /dev/null
+    clang -debug -emit-llvm ~/demo.c -c -o ~/demo.bc -mllvm -debug
+    opt -load lib/HelloIne.so -debug -HelloIne < ~/demo.bc > ~/demo.out.bc
+    clang -target riscv -mriscv=RV64IAMFD -S ~/demo.bc -o ~/demo.S
+    riscv-64-unknown-elf-gcc -o ~/demo.riscv ~/demo.S
 
 Other useful:
 

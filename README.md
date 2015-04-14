@@ -1,3 +1,5 @@
+Installation
+------------------------------------------------------------------
 Checkout LLVM head, this goes in `lib/Transforms/`
 Edit lib/CMakeLists.txt and add a line:
 
@@ -9,6 +11,12 @@ Build LLVM with cmake.
     cmake ../ -DCMAKE_INSTALL_PREFIX:PATH=$RISCV
 
 Usage:
+------------------------------------------------------------------
+Verify clang on path is riscv clang 
+
+    which clang
+
+Compile for target:
 
     clang -debug -emit-llvm ~/demo.c -c -o ~/demo.bc -mllvm -debug
     opt -load lib/HelloIne.so -debug -HelloIne < ~/demo.bc > ~/demo.out.bc
@@ -16,6 +24,7 @@ Usage:
     riscv-64-unknown-elf-gcc -o ~/demo.riscv ~/demo.S
 
 Other useful:
+------------------------------------------------------------------
 
     clang -debug -emit-llvm demo.c -c -o demo.bc -mllvm -debug 2> output.err > output.txt
     opt -debug -ipsccp < demo.bc > /dev/null 2> output2.err

@@ -333,7 +333,7 @@ static bool IsCodePointer(Value *GV, llvm::LLVMContext& context, int level) {
 	  // TODO reenable this
 	  // Make sure we are calling the function, not passing the address.
 	  CallSite CS(*U); //cast<Instruction>(U));
-	  if (!CS.isCallee(U)) {
+	  if (CS.isCallee(U)) {
 	       errs() << "skipped a call instruction because call address immediate\n";
 	       continue;
 	  }

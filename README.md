@@ -5,10 +5,20 @@ Edit lib/CMakeLists.txt and add a line:
 
     add_subdirectory(HelloIne)
 
+If not using cmake, edit lib/Makefile and add HelloIne to the list of directories
+
+    PARALLEL_DIRS = Utils Instrumentation Scalar InstCombine IPO Vectorize Hello HelloIne ObjCARC
+
 Build LLVM with cmake.
 
-    mkdir build
+    mkdir build; cd build
     cmake ../ -DCMAKE_INSTALL_PREFIX:PATH=$RISCV
+
+or make
+
+    mkdir build; cd build
+    ../configure
+    make
 
 Usage
 ------------------------------------------------------------------
@@ -16,18 +26,17 @@ Verify clang on path is the riscv clang
 
     which clang
 
-Compile for target (-O1 *is* necessary due to pass layout):
+Compile for target (-O1 *is* necessary due to pass registration proceedure, which only runs it if optimization is on):
 
-    clang -O1 -target riscv -mriscv=RV64IAMFD -Xclang -load -Xclang /usr/local/lib/HelloIne.so -c ~/demo.c -o demo.S
-
-(old way):
+    clang -O1 -target riscv -mriscv=RV64IAMFD -Xclang -load -Xclang /usr/local/lib/HelloIne.so -c demo.c -o demo.S
+    $RISCV/bin/riscv64-unknown-elf-gcc -o demo.riscv demo.S
 
 regular
 
     clang -target riscv -mriscv=RV64IAMFD -S ~/hello.c -o ~/hello.S
     $RISCV/bin/riscv64-unknown-elf-gcc -o ~/hello.riscv ~/hello.S
 
-with pass
+(old way that doesn't work with pass)
 
     clang -target riscv -mriscv=RV64IAMFD -debug ~/demo.c -S -o ~/demo.bc -mllvm -debug
     opt -load lib/HelloIne.so -debug -HelloIne < ~/demo.bc > ~/demo.out.bc

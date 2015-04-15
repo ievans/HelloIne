@@ -370,7 +370,7 @@ static bool IsCodePointer(Value *GV, llvm::LLVMContext& context, int level) {
       // "2" is the tag we are setting on the thing
       std::string riscv_set = "settag $0, 2";
       std::string x86_set = "add $0, 1337"; //int $$0x1337";
-      InlineAsm* myinlineasm = InlineAsm::get(AsmFuncTy, x86_set, "{a0},~{dirflag},~{fpsr},~{flags}",true);
+      InlineAsm* myinlineasm = InlineAsm::get(AsmFuncTy, riscv_set, "{a0},~{dirflag},~{fpsr},~{flags}",true);
       //std::vector<Value*> asm_params;
       //asm_params.push_back(blessed_load);
       errs() << " creating bless-ing call\n";

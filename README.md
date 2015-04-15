@@ -10,20 +10,27 @@ Build LLVM with cmake.
     mkdir build
     cmake ../ -DCMAKE_INSTALL_PREFIX:PATH=$RISCV
 
-Usage:
+Usage
 ------------------------------------------------------------------
-Verify clang on path is riscv clang 
+Verify clang on path is the riscv clang 
 
     which clang
 
 Compile for target:
 
-    clang -debug -emit-llvm ~/demo.c -c -o ~/demo.bc -mllvm -debug
-    opt -load lib/HelloIne.so -debug -HelloIne < ~/demo.bc > ~/demo.out.bc
-    clang -target riscv -mriscv=RV64IAMFD -S ~/demo.bc -o ~/demo.S
-    riscv-64-unknown-elf-gcc -o ~/demo.riscv ~/demo.S
+regular
 
-Other useful:
+    clang -target riscv -mriscv=RV64IAMFD -S ~/hello.c -o ~/hello.S
+    $RISCV/bin/riscv64-unknown-elf-gcc -o ~/hello.riscv ~/hello.S
+
+with pass
+
+    clang -target riscv -mriscv=RV64IAMFD -debug ~/demo.c -S -o ~/demo.bc -mllvm -debug
+    opt -load lib/HelloIne.so -debug -HelloIne < ~/demo.bc > ~/demo.out.bc
+    llc -march=cpp -target riscv -mriscv=RV64IAMFD ~/demo.out.bc -o ~/demo.S
+    $RSICV/bin/riscv64-unknown-elf-gcc -o ~/demo.riscv ~/demo.S
+
+Other useful
 ------------------------------------------------------------------
 
     clang -debug -emit-llvm demo.c -c -o demo.bc -mllvm -debug 2> output.err > output.txt

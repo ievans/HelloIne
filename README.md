@@ -16,7 +16,11 @@ Verify clang on path is the riscv clang
 
     which clang
 
-Compile for target:
+Compile for target (-O1 *is* necessary due to pass layout):
+
+    clang -O1 -target riscv -mriscv=RV64IAMFD -Xclang -load -Xclang /usr/local/lib/HelloIne.so -c ~/demo.c -o demo.S
+
+(old way):
 
 regular
 

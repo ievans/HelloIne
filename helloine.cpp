@@ -28,8 +28,9 @@ static RegisterPass<HelloIne> X("HelloIne", "HelloIne World Pass", false, false)
 
 //for functionlisttype
 #include "llvm/IR/Module.h"
-//typedef iplist<Function> FunctionListType;
-
+//#include "llvm/Pass.h"
+#include "llvm/PassManager.h"
+#include "llvm/Transforms/IPO/PassManagerBuilder.h"
 
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/ADT/DenseMap.h"
@@ -49,14 +50,14 @@ static RegisterPass<HelloIne> X("HelloIne", "HelloIne World Pass", false, false)
 //#include "llvm/IR/DerivedTypes.h"
 //#include "llvm/IR/InstVisitor.h"
 #include "llvm/IR/Instructions.h"
-#include "llvm/Pass.h"
+//#include "llvm/Pass.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Transforms/IPO.h"
-#include "llvm/Transforms/Utils/Local.h"
+//#include "llvm/Transforms/IPO.h"
+//#include "llvm/Transforms/Utils/Local.h"
 
-#include <llvm/IR/InlineAsm.h>
+#include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/ValueSymbolTable.h"
 
 //#include "llvm/Pass.h"
@@ -67,14 +68,15 @@ static RegisterPass<HelloIne> X("HelloIne", "HelloIne World Pass", false, false)
 using namespace llvm;
 
 namespace {
-  struct HelloIne : public ModulePass {
+  class HelloIne : public ModulePass {
+  public:
       static char ID;
       //HelloIne() : FunctionPass(ID) {}
       HelloIne() : ModulePass(ID) {
           //HelloIne() : FunctionPass(ID) {
           //        initializeHelloInePass(*PassRegistry::getPassRegistry());
       }
-    bool runOnModule(Module &M) override;
+      virtual bool runOnModule(Module &M); //override;
     //bool shouldProtectType(Type *Ty, bool IsStore, MDNode *TBAATag);
     //    DenseMap<StructType*, MDNode*> StructsTBAA;
     //    DenseMap<StructType*, MDNode*> UnionsTBAA;
@@ -367,8 +369,8 @@ static bool IsCodePointer(Value *GV, llvm::LLVMContext& context, int level) {
       // n.b.; gcc uses %0 but clang uses $0 to refer to the operand
       // "2" is the tag we are setting on the thing
       std::string riscv_set = "settag $0, 2";
-      std::string x86_set = "int $$0x80";
-      InlineAsm* myinlineasm = InlineAsm::get(AsmFuncTy, riscv_set, "{dx},~{dirflag},~{fpsr},~{flags}",true);
+      std::string x86_set = "add $0, 1337"; //int $$0x1337";
+      InlineAsm* myinlineasm = InlineAsm::get(AsmFuncTy, x86_set, "{a0},~{dirflag},~{fpsr},~{flags}",true);
       //std::vector<Value*> asm_params;
       //asm_params.push_back(blessed_load);
       errs() << " creating bless-ing call\n";
@@ -461,11 +463,12 @@ static bool IsCodePointer(Value *GV, llvm::LLVMContext& context, int level) {
 
 bool HelloIne::runOnModule(Module &M) { 
 
-
+  errs() << "starting on module " << M << "\n";
   Module::FunctionListType& flist = M.getFunctionList();
    // this gives us the LLVM::Value for each function; iterate through uses of
    // these values and replace them with "blessed" uses
   for (Module::FunctionListType::iterator it=flist.begin(); it!=flist.end(); ++it) {
+      errs() << "starting on function2\n";
        errs() << "function: " << it->getName() << "\n";
        IsCodePointer(it, M.getContext(), 0);
    }
@@ -551,7 +554,8 @@ for (Module::iterator F = M.begin(), E = M.end(); F != E; ++F) {
   }
 */
 
-  return false;
+  // did we modify the module yes or no
+  return true;
 }
 
 /*virtual bool runOnFunction(Function &F) {
@@ -620,8 +624,18 @@ for (Module::iterator F = M.begin(), E = M.end(); F != E; ++F) {
 //char HelloIne::ID = 0;
 //static RegisterPass<HelloIne> X("hello-ine", "Hello World Pass test", false, false);
 
+
+// for running with opt
 char HelloIne::ID = 0;
 static RegisterPass<HelloIne> X("HelloIne", "HelloIne World Pass", false, false);
+
+// for running with clang
+static void registerHelloIne(const PassManagerBuilder &, PassManagerBase &PM) {
+    PM.add(new HelloIne());
+}
+
+static RegisterStandardPasses RegisterHelloIne(PassManagerBuilder::EP_ModuleOptimizerEarly, registerHelloIne);
+
 /*
 INITIALIZE_PASS_BEGIN(HelloIne, "HelloIne", "Statically lint-checks LLVM IR",
                       false, false)

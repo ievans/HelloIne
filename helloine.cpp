@@ -353,8 +353,12 @@ static bool IsCodePointer(Value *GV, llvm::LLVMContext& context, int level) {
       errs() << " creating blessed STORE\n";
       StoreInst* blessed_store = new StoreInst(GV, blessed_storage, /* volatile = */ true, existingInst);
       errs() << " creating blessed LOAD\n";
-      LoadInst* blessed_load = new LoadInst(blessed_storage, "blessed load", /* volatile = */ false, existingInst);
+      LoadInst* blessed_load = new LoadInst(blessed_storage, "blessed load", /* volatile = */ true, existingInst);
       blessed_load->setAlignment(4);
+
+      errs() << " REPLACING\n";
+      UR->replaceUsesOfWith(GV, blessed_load);
+      errs() << "replace worked!!\n";
 
       /********************************************************************************/
       /* inline asm */
@@ -362,15 +366,15 @@ static bool IsCodePointer(Value *GV, llvm::LLVMContext& context, int level) {
       std::vector<Type*>AsmFuncTy_args;
       AsmFuncTy_args.push_back(GV->getType());
       FunctionType* AsmFuncTy = FunctionType::get(
-						  /*Result=*/Type::getVoidTy(context),
-						  /*Params=*/AsmFuncTy_args,
-						  /*isVarArg=*/false);
+          /*Result=*/GV->getType(), //IntegerType::get(mod->getContext(), 32), //Type::getVoidTy(context),
+          /*Params=*/AsmFuncTy_args,
+          /*isVarArg=*/false);
 
       // n.b.; gcc uses %0 but clang uses $0 to refer to the operand
       // "2" is the tag we are setting on the thing
       std::string riscv_set = "settag $0, 2";
       std::string x86_set = "add $0, 1337"; //int $$0x1337";
-      InlineAsm* myinlineasm = InlineAsm::get(AsmFuncTy, riscv_set, "{a0},~{dirflag},~{fpsr},~{flags}",true);
+      InlineAsm* myinlineasm = InlineAsm::get(AsmFuncTy, riscv_set, "=r,r,~{dirflag},~{fpsr},~{flags}",true);
       //std::vector<Value*> asm_params;
       //asm_params.push_back(blessed_load);
       errs() << " creating bless-ing call\n";
@@ -395,9 +399,6 @@ static bool IsCodePointer(Value *GV, llvm::LLVMContext& context, int level) {
 
       //blessed_store->setAlignment(8);
       //BitCastInst *TheBC = new BitCastInst(blessed_storage, GV->getType(), "newgv", existingInst);
-      errs() << " REPLACING\n";
-      UR->replaceUsesOfWith(GV, blessed_load);
-      errs() << "replace worked!!\n";
     } else {
       errs() << "non instruction use!!\n";
       if (isa<ConstantExpr>(UR)) { errs() << "constant expr\n"; } 
@@ -634,7 +635,7 @@ static void registerHelloIne(const PassManagerBuilder &, PassManagerBase &PM) {
     PM.add(new HelloIne());
 }
 
-static RegisterStandardPasses RegisterHelloIne(PassManagerBuilder::EP_ModuleOptimizerEarly, registerHelloIne);
+static RegisterStandardPasses RegisterHelloIne(PassManagerBuilder::EP_EnabledOnOptLevel0, registerHelloIne);
 
 /*
 INITIALIZE_PASS_BEGIN(HelloIne, "HelloIne", "Statically lint-checks LLVM IR",

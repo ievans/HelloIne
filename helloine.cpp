@@ -409,6 +409,8 @@ static bool IsCodePointer(Value *GV, llvm::LLVMContext& context, int level) {
           }
       }
 */
+      // TODO: technically we should be looking for the initializer and blessing
+      // their, rather than at use--this violates our security guarantees
       errs() << "doing recursive call\n";
       IsCodePointer(UR, context, level + 1);
     }

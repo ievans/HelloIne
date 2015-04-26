@@ -1,6 +1,32 @@
 Installation
 ------------------------------------------------------------------
-Checkout LLVM head, this goes in `lib/Transforms/`
+Checkout LLVM 3.4, this goes in `lib/Transforms/`
+
+patch LLVM 3.4 `/lib/Transforms/IPO/PassManagerBuilder.cpp`: 
+
+      MPM.add(createIPSCCPPass());              // IP SCCP
+      MPM.add(createDeadArgEliminationPass());  // Dead argument elimination
+
+      MPM.add(createInstructionCombiningPass());// Clean up after IPCP & DAE
+      MPM.add(createCFGSimplificationPass());   // Clean up after IPCP & DAE
+    }
+
+    +// BACKPORTED PATCH
+    +// http://lists.cs.uiuc.edu/pipermail/llvm-commits/Week-of-Mon-20121224/160307.html
+    +// Add extensions which are enabled at optimisation level 0 or greater.  This
+    +// is "duplicated" since for OptLevel > 0 the passes registered as
+    +// EP_EnabledOnOptLevel0 are not inserted into the appropriate Pass Manager.
+    +addExtensionsToPM(EP_EnabledOnOptLevel0, MPM);
+
+    // Start of CallGraph SCC passes.
+    if (!DisableUnitAtATime)
+      MPM.add(createPruneEHPass());             // Remove dead EH info
+    if (Inliner) {
+      MPM.add(Inliner);
+      Inliner = 0;
+    }
+
+
 Edit lib/CMakeLists.txt and add a line:
 
     add_subdirectory(HelloIne)
@@ -42,6 +68,21 @@ regular
     opt -load lib/HelloIne.so -debug -HelloIne < ~/demo.bc > ~/demo.out.bc
     llc -march=cpp -target riscv -mriscv=RV64IAMFD ~/demo.out.bc -o ~/demo.S
     $RSICV/bin/riscv64-unknown-elf-gcc -o ~/demo.riscv ~/demo.S
+
+
+Building nginx
+
+
+./configure --without-pcre --without-http_rewrite_module --without-http_gzip_module
+
+edit objs/Makefile
+
+    CC =    riscv-clang
+    CFLAGS = -O0
+
+compile:
+    
+    PATH=/home/ubuntu/riscv-tools/riscv-isa-sim/test/single-file-tests/env/:$PATH make | tee nginx-build-log.txt
 
 Other useful
 ------------------------------------------------------------------

@@ -268,6 +268,108 @@ static MDNode *getNextElTBAATag(size_t &STBAAIndex, Type *ElTy,
 // }
 
 
+static void ProcessInstruction(Value *GV, Value::use_iterator U, User* UR, llvm::LLVMContext& context, int level) {
+      Instruction* existingInst = dyn_cast<Instruction>(UR);
+
+      // we will insert an instruction blessing immediate of this
+      // instruction with a code pointer tag. this will probably require
+      // refractoring this constant into a new constant. we can use that replaceusesof thing...
+
+      // insert new instruction
+      //Instruction* newInst = new Instruction( );
+      //IRB.CreateAdd(Base, IRB.CreateIntCast(Size, IntPtrTy, false))
+      //existingInst->getParent()->getInstList().insert(existingInst, newInst);
+      errs() << LevelTab(level) << "\tinstruction: ";
+      // dyn_cast<Instruction>(UR)->print(errs());
+      // errs() << LevelTab(level) << "\tdebug location: ";
+      // dyn_cast<Instruction>(UR)->getDebugLoc().print(errs());
+      // errs() << LevelTab(level) << "\n" << LevelTab(level) << "\t[from " << dyn_cast<Instruction>(UR)->getParent()->getParent() << "]";
+      // errs() << LevelTab(level) << "\n";
+
+      if (isa<CallInst>(existingInst)) {
+	if (cast<CallInst>(existingInst)->isInlineAsm()) {
+	  errs() << "skipped a call instruction because INLINE ASM\n";
+          return;
+	}
+	if (cast<CallInst>(existingInst)->getCalledFunction()) {
+	  // the called function exists--it is a direct call; no need
+	  // to instrument it IFF the callee is this USE (b/c the
+	  // arguments might be function pointers)
+
+	  // TODO reenable this
+	  // Make sure we are calling the function, not passing the address.
+	  CallSite CS(*U); //cast<Instruction>(U));
+	  if (CS.isCallee(U)) {
+	       errs() << "skipped a call instruction because call address immediate\n";
+	       return;
+	  }
+	}
+      }
+      if (const StoreInst *SI = dyn_cast<StoreInst>(existingInst)) {
+	if (SI->isVolatile()) {
+	  errs() << "skipped a store instruction because volatile and therefor inserted by us (TODO fix this)\n";
+	  return;
+	}
+      }
+        
+      // errs() << " creating blessed storage\n";
+      // AllocaInst* blessed_storage = new AllocaInst(GV->getType(), "blessed_use", existingInst);
+      // errs() << " creating blessed STORE\n";
+      // StoreInst* blessed_store = new StoreInst(GV, blessed_storage, /* volatile = */ true, existingInst);
+      // errs() << " creating blessed LOAD\n";
+      // LoadInst* blessed_load = new LoadInst(blessed_storage, "blessed load", /* volatile = */ true, existingInst);
+      // blessed_load->setAlignment(4);
+
+
+      /********************************************************************************/
+      /* inline asm */
+
+      std::vector<Type*>AsmFuncTy_args;
+      AsmFuncTy_args.push_back(GV->getType());
+      FunctionType* AsmFuncTy = FunctionType::get(
+          /*Result=*/GV->getType(), //IntegerType::get(mod->getContext(), 32), //Type::getVoidTy(context),
+          /*Params=*/AsmFuncTy_args,
+          /*isVarArg=*/false);
+
+      // n.b.; gcc uses %0 but clang uses $0 to refer to the operand
+      // "2" is the tag we are setting on the thing
+      std::string riscv_set = "settag $0, 2";
+      std::string x86_set = "addi $0, $0, 1337"; //int $$0x1337";
+      InlineAsm* myinlineasm = InlineAsm::get(AsmFuncTy, riscv_set, "=r,r,~{dirflag},~{fpsr},~{flags}",true);
+      //std::vector<Value*> asm_params;
+      //asm_params.push_back(blessed_load);
+      errs() << " creating bless-ing call\n";
+      CallInst* asm_call = CallInst::Create(myinlineasm, GV, "", existingInst);
+      //asm_call->setCallingConv(CallingConv::C);
+      asm_call->setTailCall(false);
+      AttributeSet asm_call_PAL;
+      {
+	SmallVector<AttributeSet, 4> Attrs;
+	AttributeSet PAS;
+	{
+	  AttrBuilder B;
+	  B.addAttribute(Attribute::NoUnwind);
+	  PAS = AttributeSet::get(context, ~0U, B);
+	}
+	Attrs.push_back(PAS);
+	asm_call_PAL = AttributeSet::get(context, Attrs);
+      }
+      asm_call->setAttributes(asm_call_PAL);
+
+      errs() << " REPLACING\n";
+      //GV->replaceAllUsesWith(blessed_load);
+      //existingInst->replaceUsesOfWith(GV, blessed_store->getValueOperand());
+      //existingInst->replaceUsesOfWith(GV, blessed_load);
+      existingInst->replaceUsesOfWith(GV, asm_call);
+      errs() << "replace worked!!\n";
+
+
+      /********************************************************************************/
+
+      //blessed_store->setAlignment(8);
+      //BitCastInst *TheBC = new BitCastInst(blessed_storage, GV->getType(), "newgv", existingInst);
+}
+
 
 static bool IsCodePointer(Value *GV, llvm::LLVMContext& context, int level) {
   // Delete any dead constantexpr klingons.
@@ -290,126 +392,33 @@ static bool IsCodePointer(Value *GV, llvm::LLVMContext& context, int level) {
     //const Instruction *User = cast<Instruction>(*UI);
     User *UR = *U; //U.getUser();
 	
-    //	else if (isa<InvokeInst>(U) || isa<CallInst>(U)) 
-    //	  {
-	    
-	    
-
-        
     // User -> {Constant, Operator}
-    // we pretty much only care about constants
-
-    //        if (isa<GlobalObject>(UR)) {
-    //            errs() << LevelTab(level) << "global object identified to: " << dyn_cast<GlobalObject>(UR) << "\n";
-    //        }
 
     if (isa<Instruction>(UR)) {
-
-      Instruction* existingInst = dyn_cast<Instruction>(UR);
-
-      // we will insert an instruction blessing immediate of this
-      // instruction with a code pointer tag. this will probably require
-      // refractoring this constant into a new constant. we can use that replaceusesof thing...
-
-      // insert new instruction
-      //Instruction* newInst = new Instruction( );
-      //IRB.CreateAdd(Base, IRB.CreateIntCast(Size, IntPtrTy, false))
-      //existingInst->getParent()->getInstList().insert(existingInst, newInst);
-      errs() << LevelTab(level) << "\tinstruction: ";
-      // dyn_cast<Instruction>(UR)->print(errs());
-      // errs() << LevelTab(level) << "\tdebug location: ";
-      // dyn_cast<Instruction>(UR)->getDebugLoc().print(errs());
-      // errs() << LevelTab(level) << "\n" << LevelTab(level) << "\t[from " << dyn_cast<Instruction>(UR)->getParent()->getParent() << "]";
-      // errs() << LevelTab(level) << "\n";
-
-      if (isa<CallInst>(UR)) {
-	if (cast<CallInst>(UR)->isInlineAsm()) {
-	  errs() << "skipped a call instruction because INLINE ASM\n";
-	  continue;
-	}
-	if (cast<CallInst>(UR)->getCalledFunction()) {
-	  // the called function exists--it is a direct call; no need
-	  // to instrument it IFF the callee is this USE (b/c the
-	  // arguments might be function pointers)
-
-	  // TODO reenable this
-	  // Make sure we are calling the function, not passing the address.
-	  CallSite CS(*U); //cast<Instruction>(U));
-	  if (CS.isCallee(U)) {
-	       errs() << "skipped a call instruction because call address immediate\n";
-	       continue;
-	  }
-	}
-      }
-      if (const StoreInst *SI = dyn_cast<StoreInst>(UR)) {
-	if (SI->isVolatile()) {
-	  errs() << "skipped a store instruction because volatile and therefor inserted by us\n";
-	  continue; 
-	}
-      }
-        
-      errs() << " creating blessed storage\n";
-      AllocaInst* blessed_storage = new AllocaInst(GV->getType(), "blessed_use", existingInst);
-      errs() << " creating blessed STORE\n";
-      StoreInst* blessed_store = new StoreInst(GV, blessed_storage, /* volatile = */ true, existingInst);
-      errs() << " creating blessed LOAD\n";
-      LoadInst* blessed_load = new LoadInst(blessed_storage, "blessed load", /* volatile = */ true, existingInst);
-      blessed_load->setAlignment(4);
-
-      errs() << " REPLACING\n";
-      UR->replaceUsesOfWith(GV, blessed_load);
-      errs() << "replace worked!!\n";
-
-      /********************************************************************************/
-      /* inline asm */
-
-      std::vector<Type*>AsmFuncTy_args;
-      AsmFuncTy_args.push_back(GV->getType());
-      FunctionType* AsmFuncTy = FunctionType::get(
-          /*Result=*/GV->getType(), //IntegerType::get(mod->getContext(), 32), //Type::getVoidTy(context),
-          /*Params=*/AsmFuncTy_args,
-          /*isVarArg=*/false);
-
-      // n.b.; gcc uses %0 but clang uses $0 to refer to the operand
-      // "2" is the tag we are setting on the thing
-      std::string riscv_set = "settag $0, 2";
-      std::string x86_set = "add $0, 1337"; //int $$0x1337";
-      InlineAsm* myinlineasm = InlineAsm::get(AsmFuncTy, riscv_set, "=r,r,~{dirflag},~{fpsr},~{flags}",true);
-      //std::vector<Value*> asm_params;
-      //asm_params.push_back(blessed_load);
-      errs() << " creating bless-ing call\n";
-      CallInst* asm_call = CallInst::Create(myinlineasm, blessed_load, "", existingInst);
-      asm_call->setCallingConv(CallingConv::C);
-      asm_call->setTailCall(false);
-      AttributeSet asm_call_PAL;
-      {
-	SmallVector<AttributeSet, 4> Attrs;
-	AttributeSet PAS;
-	{
-	  AttrBuilder B;
-	  B.addAttribute(Attribute::NoUnwind);
-	  PAS = AttributeSet::get(context, ~0U, B);
-	}
-	Attrs.push_back(PAS);
-	asm_call_PAL = AttributeSet::get(context, Attrs);
-      }
-      asm_call->setAttributes(asm_call_PAL);
-
-      /********************************************************************************/
-
-      //blessed_store->setAlignment(8);
-      //BitCastInst *TheBC = new BitCastInst(blessed_storage, GV->getType(), "newgv", existingInst);
+        ProcessInstruction(GV, U, UR, context, level);
     } else {
       errs() << "non instruction use!!\n";
-      if (isa<ConstantExpr>(UR)) { errs() << "constant expr\n"; } 
+      //if (isa<GlobalObject>(UR)) { errs() << "global object\n"; }
+      if (isa<ConstantExpr>(UR)) { errs() << "constant expr\n"; }
       if (isa<Constant>(UR)) { errs() << "constant nonexpr\n"; } 
+/*
+ TODO: doesnt work in llvm 34 
+      if (GV->hasInitializer()) {
+          errs() << "has initializer!!\n";
+          if (!isa<GlobalValue>(GV->getInitializer())) {
+          }
+      }
+*/
+      errs() << "doing recursive call\n";
+      IsCodePointer(UR, context, level + 1);
     }
-
+  }
+/*
     if (const StoreInst *SI = dyn_cast<StoreInst>(UR)) {
-      //            errs() << LevelTab(level) << "--> possible store at " << SI << "\n";
-      // if (SI->getOperand(0) == GV || SI->isVolatile()) {
-      //     //return true;  // Storing addr of GV.
-      // }
+        errs() << "--> possible store at " << SI << "\n";
+        if (SI->getOperand(0) == GV || SI->isVolatile()) {
+            //return true;  // Storing addr of GV.
+        }
     } else if (isa<InvokeInst>(UR) || isa<CallInst>(UR)) {
       // errs() << LevelTab(level) << "--> indirect? invokation at " << UR << "\n";
       // isCodePointer = true;
@@ -432,15 +441,14 @@ static bool IsCodePointer(Value *GV, llvm::LLVMContext& context, int level) {
     } else if (isa<BlockAddress>(UR)) {
       // blockaddress doesn't take the address of the function, it takes addr
       // of label.
-      //            errs() << LevelTab(level) << "--> block address\n";
+        errs() << "--> block address\n";
     } else {
-      //            errs() << LevelTab(level) << "--> UNKNOWN invokation " << U << "\n";
+        errs() << "--> UNKNOWN invokation " << UR << "\n";
     }
+*/
     //isCodePointer =  isCodePointer || IsCodePointer(UR, context, level + 1);
-  }
   return isCodePointer;
 }
-  
 
 // void EnumerateValue(Value* v) {
 //     errs() << "this value found in the symboltable: ";
@@ -469,8 +477,8 @@ bool HelloIne::runOnModule(Module &M) {
    // this gives us the LLVM::Value for each function; iterate through uses of
    // these values and replace them with "blessed" uses
   for (Module::FunctionListType::iterator it=flist.begin(); it!=flist.end(); ++it) {
-      errs() << "starting on function2\n";
-       errs() << "function: " << it->getName() << "\n";
+      errs() << "********************\nstarting on function: ";
+       errs() << it->getName() << "\n*****************\n";
        IsCodePointer(it, M.getContext(), 0);
    }
 

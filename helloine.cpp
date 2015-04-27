@@ -28,6 +28,8 @@ static RegisterPass<HelloIne> X("HelloIne", "HelloIne World Pass", false, false)
 
 //for functionlisttype
 #include "llvm/IR/Module.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/ADT/ValueMap.h"
 //#include "llvm/Pass.h"
 #include "llvm/PassManager.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
@@ -77,9 +79,12 @@ namespace {
           //        initializeHelloInePass(*PassRegistry::getPassRegistry());
       }
       virtual bool runOnModule(Module &M); //override;
+      bool IsCodePointer(Value *GV, llvm::LLVMContext& context, int level);
     //bool shouldProtectType(Type *Ty, bool IsStore, MDNode *TBAATag);
     //    DenseMap<StructType*, MDNode*> StructsTBAA;
     //    DenseMap<StructType*, MDNode*> UnionsTBAA;
+   // map of {function -> global values used in that function}
+   ValueMap<Function*, SmallVector<Value*, 16> > UserFunctionMap;
   };
 }
 
@@ -363,7 +368,6 @@ static void ProcessInstruction(Value *GV, Value::use_iterator U, User* UR, llvm:
       existingInst->replaceUsesOfWith(GV, asm_call);
       errs() << "replace worked!!\n";
 
-
       /********************************************************************************/
 
       //blessed_store->setAlignment(8);
@@ -371,13 +375,62 @@ static void ProcessInstruction(Value *GV, Value::use_iterator U, User* UR, llvm:
 }
 
 
-static bool IsCodePointer(Value *GV, llvm::LLVMContext& context, int level) {
+// fix the globals
+//void AddressSanitizerModule::createInitializerPoisonCalls(
+/*
+void createInitializerTags(Module &M, GlobalValue *ModuleName) {
+    GlobalVariable *GV = M.getGlobalVariable("llvm.global_ctors");
+    ConstantArray *CA = cast<ConstantArray>(GV->getInitializer());
+    for (Use &OP : CA->operands()) {
+        if (isa<ConstantAggregateZero>(OP)) continue;
+        ConstantStruct *CS = cast<ConstantStruct>(OP);
+
+        // Must have a function or null ptr.
+        if (Function *F = dyn_cast<Function>(CS->getOperand(1))) {
+            if (F->getName() == kAsanModuleCtorName) continue;
+            ConstantInt *Priority = dyn_cast<ConstantInt>(CS->getOperand(0));
+            // Don't instrument CTORs that will run before asan.module_ctor.
+            if (Priority->getLimitedValue() <= kAsanCtorAndDtorPriority) continue;
+            
+            // TODO
+            //poisonOneInitializer(*F, ModuleName);
+        }
+    }
+}
+*/
+
+//insert uses in front of fction pointers 
+void poisonOneInitializer(Function &GlobalInit, GlobalValue *ModuleName) {
+    // Set up the arguments to our poison/unpoison functions.
+    IRBuilder<> IRB(GlobalInit.begin()->getFirstInsertionPt());
+    // Add a call to poison the ues external globals before the given function starts.
+    //Value *ModuleNameAddr = ConstantExpr::getPointerCast(ModuleName, IntptrTy);
+    //IRB.CreateCall(AsanPoisonGlobals, ModuleNameAddr);
+    
+    
+}
+
+Function* findEnclosingFunc(Value* V) {
+    if (Argument* Arg = dyn_cast<Argument>(V)) {
+        return Arg->getParent();
+    }
+    if (Instruction* I = dyn_cast<Instruction>(V)) {
+        return I->getParent()->getParent();
+    }
+    return NULL;
+}
+
+
+
+bool HelloIne::IsCodePointer(Value *GV, llvm::LLVMContext& context, int level) {
   // Delete any dead constantexpr klingons.
   //GV->removeDeadConstantUsers();
 
   // todo: support lambda functions (they are valid in the LLVM IR). We should
   // make sure that they are considered globals and thus are being passed in to this analysis :)
   // search for lambdas in http://llvm.lyngvig.org/Articles/Mapping-High-Level-Constructs-to-LLVM-IR#16
+    if (level >= 10) { errs() << " recursion depth exceeded\n"; return true; } 
+
 
   bool isCodePointer = false;
   errs() << LevelTab(level) << "Value: " << GV << "(name: " << GV->getName() << "\n";
@@ -388,33 +441,68 @@ static bool IsCodePointer(Value *GV, llvm::LLVMContext& context, int level) {
 
   //use_iterator
   //for (Use &U : GV->uses()) {
+
   for (Value::use_iterator U = GV->use_begin(), e = GV->use_end(); U != e; ++U) {
     //const Instruction *User = cast<Instruction>(*UI);
     User *UR = *U; //U.getUser();
-	
-    // User -> {Constant, Operator}
+    
+    // is the use a direct call? if so, we don't need to protect
+    if (isa<CallInst>(UR)) {
+	if (cast<CallInst>(UR)->isInlineAsm()) {
+            errs() << "skipped a call instruction because INLINE ASM\n";
+            continue;
+	}
+	if (cast<CallInst>(UR)->getCalledFunction()) {
+            // the called function exists--it is a direct call; no need
+            // to instrument it IFF the callee is this USE (b/c the
+            // arguments might be function pointers)
 
+            // TODO reenable this
+            // Make sure we are calling the function, not passing the address.
+            CallSite CS(*U); //cast<Instruction>(U));
+            if (CS.isCallee(U)) {
+                errs() << "skipped a call instruction because call address immediate\n";
+                continue;
+            }
+	}
+    }
+
+    // User -> {Constant, Operator}
+    // what function is this in?
+    Function* f = findEnclosingFunc(UR);
+    if (UserFunctionMap.count(f)) {
+        UserFunctionMap[f].push_back(GV);
+    } else {
+        SmallVector<Value *, 16> vect;
+        vect.push_back(GV);
+        UserFunctionMap[f] = vect;
+    }
+  }
+
+/*
     if (isa<Instruction>(UR)) {
         ProcessInstruction(GV, U, UR, context, level);
     } else {
       errs() << "non instruction use!!\n";
       //if (isa<GlobalObject>(UR)) { errs() << "global object\n"; }
+      if (isa<GlobalVariable>(GV)) { errs() << "global variable\n"; }
       if (isa<ConstantExpr>(UR)) { errs() << "constant expr\n"; }
       if (isa<Constant>(UR)) { errs() << "constant nonexpr\n"; } 
-/*
- TODO: doesnt work in llvm 34 
-      if (GV->hasInitializer()) {
+
+// TODO: doesnt work in llvm 34 
+      if (isa<GlobalVariable>(UR) && cast<GlobalVariable>(UR)->hasInitializer()) {
           errs() << "has initializer!!\n";
-          if (!isa<GlobalValue>(GV->getInitializer())) {
+          if (!cast<GlobalVariable>(UR)->getInitializer()) {
+              errs() << "got! initializer!!\n";
           }
       }
-*/
       // TODO: technically we should be looking for the initializer and blessing
       // their, rather than at use--this violates our security guarantees
-      errs() << "doing recursive call\n";
-      IsCodePointer(UR, context, level + 1);
+      //errs() << "doing recursive call\n";
+      //IsCodePointer(UR, context, level + 1);
     }
   }
+*/
 /*
     if (const StoreInst *SI = dyn_cast<StoreInst>(UR)) {
         errs() << "--> possible store at " << SI << "\n";
@@ -472,17 +560,75 @@ static bool IsCodePointer(Value *GV, llvm::LLVMContext& context, int level) {
 // }
 
 
+static void CreateSetTag(Value * GV, Instruction* existingInst, llvm::LLVMContext& context) {
+    std::vector<Type*>AsmFuncTy_args;
+    AsmFuncTy_args.push_back(GV->getType());
+    FunctionType* AsmFuncTy = FunctionType::get(
+        /*Result=*/GV->getType(), //IntegerType::get(mod->getContext(), 32), //Type::getVoidTy(context),
+        /*Params=*/AsmFuncTy_args,
+        /*isVarArg=*/false);
+
+    // n.b.; gcc uses %0 but clang uses $0 to refer to the operand
+    // "2" is the tag we are setting on the thing
+    std::string riscv_set = "settag $0, 2";
+    std::string x86_set = "addi $0, $0, 1337"; //int $$0x1337";
+    InlineAsm* myinlineasm = InlineAsm::get(AsmFuncTy, riscv_set, "=r,r,~{dirflag},~{fpsr},~{flags}",true);
+    //std::vector<Value*> asm_params;
+    //asm_params.push_back(blessed_load);
+    errs() << " creating bless-ing call\n";
+    CallInst* asm_call = CallInst::Create(myinlineasm, GV, "", existingInst);
+    //asm_call->setCallingConv(CallingConv::C);
+    asm_call->setTailCall(false);
+    AttributeSet asm_call_PAL;
+    {
+        SmallVector<AttributeSet, 4> Attrs;
+        AttributeSet PAS;
+        {
+            AttrBuilder B;
+            B.addAttribute(Attribute::NoUnwind);
+            PAS = AttributeSet::get(context, ~0U, B);
+        }
+        Attrs.push_back(PAS);
+        asm_call_PAL = AttributeSet::get(context, Attrs);
+    }
+    asm_call->setAttributes(asm_call_PAL);
+
+
+    if (isa<ConstantExpr>(existingInst)) { errs() << "constant expr\n"; return;  }
+    if (isa<Constant>(existingInst)) { errs() << "constant nonexp\n";  return; } 
+    existingInst->replaceUsesOfWith(GV, asm_call);
+    errs() << "replace worked!!\n";
+}
+
 bool HelloIne::runOnModule(Module &M) { 
 
   errs() << "starting on module " << M << "\n";
   Module::FunctionListType& flist = M.getFunctionList();
    // this gives us the LLVM::Value for each function; iterate through uses of
    // these values and replace them with "blessed" uses
+
   for (Module::FunctionListType::iterator it=flist.begin(); it!=flist.end(); ++it) {
       errs() << "********************\nstarting on function: ";
        errs() << it->getName() << "\n*****************\n";
-       IsCodePointer(it, M.getContext(), 0);
+       //IsCodePointer(it, M.getContext(), 0);
    }
+
+  ValueMap<Function*, SmallVector<Value*, 16> >::iterator iter;
+  for (iter = UserFunctionMap.begin(); iter != UserFunctionMap.end(); ++iter) {
+      Function * theFunction = iter->first;
+      if (theFunction == NULL) { continue; }
+
+      errs() << "function: " << theFunction->getName() << "\n";
+      
+      for(int i = 0; i != (iter->second).size(); i++) {
+          Value * GV = (iter->second[i]);
+          errs() << "\t\t\t: " << GV << "\n";          
+
+          // insert a use!
+          CreateSetTag(GV, theFunction->begin()->getFirstInsertionPt(), M.getContext());
+      }
+  }
+  
 
    //EnumerateValueSymbolTable(M.getValueSymbolTable());
     //SmallVector<GlobalVariable *, 16> GlobalsToChange;

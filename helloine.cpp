@@ -568,6 +568,14 @@ static void CreateSetTag(Value * GV, Instruction* existingInst, llvm::LLVMContex
         /*Params=*/AsmFuncTy_args,
         /*isVarArg=*/false);
 
+    // we need to create a volatile store so that the full value of the GV will be computed before we 
+    // create our settag insn.
+    errs() << " creating blessed storage\n";
+    AllocaInst* blessed_storage = new AllocaInst(GV->getType(), "blessed_use", existingInst);
+    errs() << " creating blessed LOAD\n";
+    LoadInst* blessed_load = new LoadInst(blessed_storage, "blessed load", /* volatile = */ true, existingInst);
+    blessed_load->setAlignment(4);
+
     // n.b.; gcc uses %0 but clang uses $0 to refer to the operand
     // "2" is the tag we are setting on the thing
     std::string riscv_set = "settag $0, 2";
@@ -576,7 +584,7 @@ static void CreateSetTag(Value * GV, Instruction* existingInst, llvm::LLVMContex
     //std::vector<Value*> asm_params;
     //asm_params.push_back(blessed_load);
     errs() << " creating bless-ing call\n";
-    CallInst* asm_call = CallInst::Create(myinlineasm, GV, "", existingInst);
+    CallInst* asm_call = CallInst::Create(myinlineasm, blessed_load, "", existingInst);
     //asm_call->setCallingConv(CallingConv::C);
     asm_call->setTailCall(false);
     AttributeSet asm_call_PAL;
@@ -593,11 +601,15 @@ static void CreateSetTag(Value * GV, Instruction* existingInst, llvm::LLVMContex
     }
     asm_call->setAttributes(asm_call_PAL);
 
+    errs() << " creating blessed STORE\n";
+    StoreInst* blessed_store = new StoreInst(GV, blessed_storage, /* volatile = */ true, existingInst);
+
 
     if (isa<ConstantExpr>(existingInst)) { errs() << "constant expr\n"; return;  }
     if (isa<Constant>(existingInst)) { errs() << "constant nonexp\n";  return; } 
-    existingInst->replaceUsesOfWith(GV, asm_call);
-    errs() << "replace worked!!\n";
+    
+    //blessed_store->replaceUsesOfWith(GV, asm_call);
+    errs() << "NOT replacing!!\n";
 }
 
 bool HelloIne::runOnModule(Module &M) { 
@@ -610,7 +622,7 @@ bool HelloIne::runOnModule(Module &M) {
   for (Module::FunctionListType::iterator it=flist.begin(); it!=flist.end(); ++it) {
       errs() << "********************\nstarting on function: ";
        errs() << it->getName() << "\n*****************\n";
-       //IsCodePointer(it, M.getContext(), 0);
+       IsCodePointer(it, M.getContext(), 0);
    }
 
   ValueMap<Function*, SmallVector<Value*, 16> >::iterator iter;

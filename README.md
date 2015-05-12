@@ -48,6 +48,14 @@ or make
 
 Usage
 ------------------------------------------------------------------
+
+Simplest: 
+
+    PATH=/home/ubuntu/riscv-tools/riscv-isa-sim/test/single-file-tests/env/:$PATH
+    riscv-clang <yourfile>
+    SPIKE=spike-fptr-tags ../../../linux/run_in_spike_linux.sh $PWD/a.out | tee test.txt
+
+
 Verify clang on path is the riscv clang 
 
     which clang

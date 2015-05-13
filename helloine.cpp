@@ -467,6 +467,15 @@ bool HelloIne::IsCodePointer(Value *GV, llvm::LLVMContext& context, int level) {
 	}
     }
 
+
+    // if (const StoreInst *SI = dyn_cast<StoreInst>(UR)) {
+    //     errs() << "--> possible store at " << SI << "\n";
+    //     if (SI->getOperand(0) == GV || SI->isVolatile()) {
+    //         //return true;  // Storing addr of GV.
+    //     } else { continue; }
+    // } 
+
+
     // User -> {Constant, Operator}
     // what function is this in?
     Function* f = findEnclosingFunc(UR);
@@ -503,13 +512,9 @@ bool HelloIne::IsCodePointer(Value *GV, llvm::LLVMContext& context, int level) {
     }
   }
 */
-/*
-    if (const StoreInst *SI = dyn_cast<StoreInst>(UR)) {
-        errs() << "--> possible store at " << SI << "\n";
-        if (SI->getOperand(0) == GV || SI->isVolatile()) {
-            //return true;  // Storing addr of GV.
-        }
-    } else if (isa<InvokeInst>(UR) || isa<CallInst>(UR)) {
+
+/*  
+     else if (isa<InvokeInst>(UR) || isa<CallInst>(UR)) {
       // errs() << LevelTab(level) << "--> indirect? invokation at " << UR << "\n";
       // isCodePointer = true;
 
@@ -573,7 +578,7 @@ static void CreateSetTag(Value * GV, Instruction* existingInst, llvm::LLVMContex
     errs() << " creating blessed storage\n";
     AllocaInst* blessed_storage = new AllocaInst(GV->getType(), "blessed_use", existingInst);
     errs() << " creating blessed LOAD\n";
-    LoadInst* blessed_load = new LoadInst(blessed_storage, "blessed load", /* volatile = */ true, existingInst);
+    LoadInst* blessed_load = new LoadInst(blessed_storage, "blessed load", /* volatile = */ false, existingInst);
     blessed_load->setAlignment(4);
 
     // n.b.; gcc uses %0 but clang uses $0 to refer to the operand
@@ -602,13 +607,13 @@ static void CreateSetTag(Value * GV, Instruction* existingInst, llvm::LLVMContex
     asm_call->setAttributes(asm_call_PAL);
 
     errs() << " creating blessed STORE\n";
-    StoreInst* blessed_store = new StoreInst(GV, blessed_storage, /* volatile = */ true, existingInst);
+    StoreInst* blessed_store = new StoreInst(GV, blessed_storage, /* volatile = */ false, existingInst);
 
 
     if (isa<ConstantExpr>(existingInst)) { errs() << "constant expr\n"; return;  }
     if (isa<Constant>(existingInst)) { errs() << "constant nonexp\n";  return; } 
     
-    //blessed_store->replaceUsesOfWith(GV, asm_call);
+    blessed_store->replaceUsesOfWith(GV, asm_call);
     errs() << "NOT replacing!!\n";
 }
 
@@ -634,7 +639,7 @@ bool HelloIne::runOnModule(Module &M) {
       
       for(int i = 0; i != (iter->second).size(); i++) {
           Value * GV = (iter->second[i]);
-          errs() << "\t\t\t: " << GV << "\n";          
+          errs() << "\t\t\t: " << GV->getType() <<  "::" << GV->getName() << "\n";
 
           // insert a use!
           CreateSetTag(GV, theFunction->begin()->getFirstInsertionPt(), M.getContext());
